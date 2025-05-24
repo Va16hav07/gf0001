@@ -389,4 +389,31 @@
   // Display the initial scene.
   switchScene(scenes[0]);
 
+  // WebXR integration
+  if (navigator.xr) {
+    document.getElementById('enter-vr').addEventListener('click', async () => {
+      try {
+        const session = await navigator.xr.requestSession('immersive-vr');
+        const canvas = document.querySelector('canvas');
+
+        const gl = canvas.getContext('webgl', { xrCompatible: true });
+
+        await session.updateRenderState({
+          baseLayer: new XRWebGLLayer(session, gl)
+        });
+
+        session.requestAnimationFrame(function onXRFrame(time, frame) {
+          session.requestAnimationFrame(onXRFrame);
+        });
+
+        console.log("VR session started");
+      } catch (err) {
+        console.error("Failed to start VR session:", err);
+      }
+    });
+  } else {
+    console.warn("WebXR not supported on this browser");
+    document.getElementById('enter-vr').style.display = 'none';
+  }
+
 })();
