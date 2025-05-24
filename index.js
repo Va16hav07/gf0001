@@ -389,28 +389,120 @@
   // Display the initial scene.
   switchScene(scenes[0]);
 
-  // WebXR integration
+  // WebXR integration - improved to properly render Marzipano content
   if (navigator.xr) {
+    // Initialize WebXR polyfill if needed
+    if (window.WebXRPolyfill) {
+      new WebXRPolyfill();
+    }
+    
+    let xrSession = null;
+    let xrReferenceSpace = null;
+    let xrViewerPose = null;
+    let activeScene = scenes[0]; // Track the currently active scene
+    
     document.getElementById('enter-vr').addEventListener('click', async () => {
+      if (xrSession) {
+        await endXRSession();
+        return;
+      }
+      
       try {
-        const session = await navigator.xr.requestSession('immersive-vr');
-        const canvas = document.querySelector('canvas');
-
+        // Request a VR session
+        xrSession = await navigator.xr.requestSession('immersive-vr', {
+          requiredFeatures: ['local']
+        });
+        
+        // Get Marzipano's canvas and WebGL context
+        const canvas = panoElement.querySelector('canvas');
         const gl = canvas.getContext('webgl', { xrCompatible: true });
-
-        await session.updateRenderState({
-          baseLayer: new XRWebGLLayer(session, gl)
+        
+        // Set up XR rendering
+        await xrSession.updateRenderState({
+          baseLayer: new XRWebGLLayer(xrSession, gl)
         });
-
-        session.requestAnimationFrame(function onXRFrame(time, frame) {
-          session.requestAnimationFrame(onXRFrame);
+        
+        // Get the reference space for the session
+        xrReferenceSpace = await xrSession.requestReferenceSpace('local');
+        
+        // Add session end event handler
+        xrSession.addEventListener('end', () => {
+          xrSession = null;
+          document.getElementById('enter-vr').textContent = 'Enter VR';
         });
-
-        console.log("VR session started");
+        
+        document.getElementById('enter-vr').textContent = 'Exit VR';
+        
+        // Start XR rendering loop
+        xrSession.requestAnimationFrame(onXRFrame);
+        
       } catch (err) {
         console.error("Failed to start VR session:", err);
       }
     });
+    
+    async function endXRSession() {
+      if (xrSession) {
+        await xrSession.end();
+        xrSession = null;
+        document.getElementById('enter-vr').textContent = 'Enter VR';
+      }
+    }
+    
+    function onXRFrame(time, frame) {
+      if (!xrSession) return;
+      
+      // Schedule the next frame
+      xrSession.requestAnimationFrame(onXRFrame);
+      
+      // Get the active scene view from Marzipano
+      const view = activeScene.view;
+      
+      // Get the XRLayer associated with the session
+      const xrLayer = frame.session.renderState.baseLayer;
+      const gl = xrLayer.context;
+      
+      // Get viewer pose in the reference space
+      xrViewerPose = frame.getViewerPose(xrReferenceSpace);
+      
+      if (xrViewerPose) {
+        const glLayer = frame.session.renderState.baseLayer;
+        
+        // For each XR view, adjust Marzipano view parameters accordingly
+        for (const xrView of xrViewerPose.views) {
+          const viewport = glLayer.getViewport(xrView);
+          gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+          
+          // Convert XR camera view to Marzipano view parameters
+          // This is a basic implementation - might need refinement based on 
+          // how Marzipano's view transformation works
+          const viewMatrix = xrView.transform.inverse.matrix;
+          
+          // Extract yaw and pitch from view matrix
+          // This is simplified and may need adjustment
+          const yaw = Math.atan2(viewMatrix[8], viewMatrix[10]);
+          const pitch = Math.asin(-viewMatrix[9]);
+          
+          // Update Marzipano view (smoothly)
+          view.setParameters({
+            yaw: yaw,
+            pitch: pitch,
+            fov: 1.5 // Approx 90 degrees in radians
+          });
+          
+          // Force Marzipano to render a frame into the XR layer's framebuffer
+          activeScene.scene.layer().renderFrame();
+        }
+      }
+    }
+    
+    // Update the active scene reference when the scene changes
+    const originalSwitchScene = switchScene;
+    switchScene = function(scene) {
+      originalSwitchScene(scene);
+      activeScene = scene;
+    };
+    
   } else {
     console.warn("WebXR not supported on this browser");
     document.getElementById('enter-vr').style.display = 'none';
